@@ -126,8 +126,14 @@ This will open the MCP Inspector interface where you can interact with your serv
 
 - `search_accounts` - Search for accounts using multiple criteria (name, externalId)
 - `find_account_by_name` - Find accounts by their name (partial matching supported)
-- `refresh_accounts` - Refresh the cached list of accounts
-- `get_account_health` - Get health scores for a specific account
+- `get_account_details` - Get full account details including traits, success metrics, health score, MRR, NPS, timestamps, CSM assignment, and segments
+- `refresh_accounts` - Refresh the cached list of accounts (supports status filtering: active, churned, activeOrChurned)
+- `get_account_health` - Get health score breakdown for a specific account
+
+### Traits & Success Metrics
+
+- `list_custom_traits` - List all custom trait definitions for a given object type (accounts, users, notes, tasks, projects, organizations)
+- `update_account_traits` - Update custom traits on a Vitally account (traits are merged with existing values)
 
 ### User Management
 
@@ -137,7 +143,17 @@ This will open the MCP Inspector interface where you can interact with your serv
 
 - `get_account_conversations` - Get recent conversations for an account
 - `get_account_tasks` - Get tasks for an account (can filter by status)
+- `get_account_notes` - Get notes for an account
+- `get_note_by_id` - Get full content of a specific note
 - `create_account_note` - Create a new note for an account
+
+### NPS & Surveys
+
+- `get_account_nps` - Get NPS survey responses for an account, including scores and feedback
+
+### Projects
+
+- `get_account_projects` - Get projects (e.g., onboarding, implementation) for an account
 
 ## Example Questions to Ask
 
@@ -146,12 +162,17 @@ When connected to an MCP client like Claude, you can ask questions such as:
 - "List all our customers"
 - "Find accounts with 'Acme' in their name"
 - "What's the health score for account X?"
+- "Show me full details and traits for customer Y"
+- "Which customers have the highest success metrics?"
+- "What custom traits are defined on our accounts?"
+- "Update the deployment model trait for account X to 'cloud'"
 - "Find user with email <example@company.com>"
-- "Show me details about customer Y"
 - "Get recent conversations for account Z"
 - "What tasks are open for account A?"
+- "Show me NPS responses for account B"
+- "What onboarding projects are in progress for account C?"
 - "Add a note to account B about our recent call"
-- "What tools can I use for account management?"
+- "Show me all churned accounts"
 
 ## Troubleshooting
 
