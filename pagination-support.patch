@@ -1,0 +1,152 @@
+diff --git a/src/index.ts b/src/index.ts
+index 1029d1e..a3d65e2 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -217,6 +217,54 @@ async function callVitallyAPI<T>(endpoint: string, method = 'GET', body?: any):
+   }
+ }
+ 
++/**
++ * Fetch all pages from a paginated Vitally API endpoint.
++ * Uses cursor-based pagination via the `next` / `from` pattern.
++ * 
++ * @param endpoint  - The API path (without query string), e.g. '/resources/accounts'
++ * @param params    - Additional query parameters (e.g. { status: 'active' })
++ * @param maxPages  - Safety limit to prevent runaway loops (default: 50)
++ * @returns All results concatenated across every page
++ */
++async function fetchAllPages<T>(
++  endpoint: string,
++  params: Record<string, string> = {},
++  maxPages: number = 50
++): Promise<T[]> {
++  const allResults: T[] = [];
++  let cursor: string | null = null;
++  let pageCount = 0;
++
++  do {
++    const queryParams = new URLSearchParams(params);
++    queryParams.set('limit', '100'); // Vitally max per page
++    if (cursor) {
++      queryParams.set('from', cursor);
++    }
++
++    const url = `${endpoint}?${queryParams.toString()}`;
++    const response = await callVitallyAPI<VitallyPaginatedResponse<T>>(url);
++
++    if (response.results && response.results.length > 0) {
++      allResults.push(...response.results);
++    }
++
++    cursor = response.next;
++    pageCount++;
++
++    // Small delay between pages to be respectful of rate limits (1000 req/min)
++    if (cursor) {
++      await new Promise(resolve => setTimeout(resolve, 100));
++    }
++  } while (cursor && pageCount < maxPages);
++
++  if (cursor) {
++    console.error(`Warning: fetchAllPages hit maxPages limit (${maxPages}) for ${endpoint}. Some results may be missing.`);
++  }
++
++  return allResults;
++}
++
+ /**
+  * Mock API response for demo mode when API key is not available
+  */
+@@ -390,8 +438,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
+   try {
+     // Fetch accounts from Vitally API if not cached
+     if (accountsCache.length === 0) {
+-      const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyAccount>>('/resources/accounts');
+-      accountsCache = response.results || [];
++      accountsCache = await fetchAllPages<VitallyAccount>('/resources/accounts');
+     }
+ 
+     return {
+@@ -615,18 +662,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
+     },
+     {
+       name: "refresh_accounts",
+-      description: "Vitally tool to refresh the list of accounts",
++      description: "Vitally tool to refresh the list of accounts. By default fetches ALL accounts across all pages (cursor-based pagination). Set fetchAll to false to fetch only the first page.",
+       inputSchema: {
+         type: "object",
+         properties: {
+-          limit: {
+-            type: "number",
+-            description: "Maximum number of accounts to fetch (default: 100)"
+-          },
+           status: {
+             type: "string",
+             description: "Filter by account status: 'active' (default), 'churned', or 'activeOrChurned'",
+             enum: ["active", "churned", "activeOrChurned"]
++          },
++          fetchAll: {
++            type: "boolean",
++            description: "If true (default), fetches all accounts across all pages. If false, fetches only the first page (up to 100)."
+           }
+         }
+       }
+@@ -880,10 +927,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
+       }
+ 
+       try {
+-        // Ensure accounts are loaded
++        // Ensure accounts are loaded (all pages)
+         if (accountsCache.length === 0) {
+-          const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyAccount>>('/resources/accounts');
+-          accountsCache = response.results || [];
++          accountsCache = await fetchAllPages<VitallyAccount>('/resources/accounts');
+         }
+ 
+         // Filter accounts by criteria
+@@ -965,10 +1011,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
+       }
+ 
+       try {
+-        // Ensure accounts are loaded
++        // Ensure accounts are loaded (all pages)
+         if (accountsCache.length === 0) {
+-          const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyAccount>>('/resources/accounts');
+-          accountsCache = response.results || [];
++          accountsCache = await fetchAllPages<VitallyAccount>('/resources/accounts');
+         }
+ 
+         // Search for accounts with matching names (case insensitive)
+@@ -1177,16 +1222,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
+ 
+     case "refresh_accounts": {
+       try {
+-        const limit = request.params.arguments?.limit as number || 100;
+         const status = request.params.arguments?.status as string || 'active';
+-        const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyAccount>>(
+-          `/resources/accounts?limit=${limit}&status=${status}`
+-        );
+-        accountsCache = response.results || [];
++        const fetchAll = request.params.arguments?.fetchAll !== false; // default true
++
++        if (fetchAll) {
++          // Fetch ALL accounts across all pages
++          accountsCache = await fetchAllPages<VitallyAccount>(
++            '/resources/accounts',
++            { status }
++          );
++        } else {
++          // Fetch only the first page (legacy behavior)
++          const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyAccount>>(
++            `/resources/accounts?limit=100&status=${status}`
++          );
++          accountsCache = response.results || [];
++        }
+ 
+         // Format summary information about accounts with key success fields
+         const summary = {
+           count: accountsCache.length,
++          fetchedAllPages: fetchAll,
+           accounts: accountsCache.map(account => ({
+             id: account.id,
+             name: account.name,
