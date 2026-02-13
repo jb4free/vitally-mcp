@@ -31,6 +31,63 @@ interface VitallyAccount {
   id: string;
   name: string;
   externalId?: string;
+  traits?: Record<string, any>;
+  healthScore?: number;
+  mrr?: number;
+  npsScore?: number;
+  npsDetractorCount?: number;
+  npsPassiveCount?: number;
+  npsPromoterCount?: number;
+  usersCount?: number;
+  churnedAt?: string;
+  firstSeenTimestamp?: string;
+  lastSeenTimestamp?: string;
+  lastInboundMessageTimestamp?: string;
+  lastOutboundMessageTimestamp?: string;
+  nextRenewalDate?: string;
+  trialEndDate?: string;
+  csmId?: string;
+  accountExecutiveId?: string;
+  accountOwnerId?: string;
+  organizationId?: string;
+  segments?: Array<{ id: string; name: string }>;
+  keyRoles?: Array<any>;
+  createdAt?: string;
+  updatedAt?: string;
+  [key: string]: any;
+}
+
+interface VitallyCustomField {
+  label: string;
+  type: string;
+  path: string;
+  createdAt: string;
+}
+
+interface VitallyNpsResponse {
+  id: string;
+  externalId?: string;
+  userId: string;
+  score: number;
+  feedback?: string;
+  respondedAt: string;
+  [key: string]: any;
+}
+
+interface VitallyProject {
+  id: string;
+  name: string;
+  accountId?: string;
+  durationInDays?: number;
+  ownedByVitallyUserId?: string;
+  targetStartDate?: string;
+  actualStartDate?: string;
+  actualCompletionDate?: string;
+  projectStatusId?: string;
+  projectCategoryId?: string;
+  traits?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
   [key: string]: any;
 }
 
@@ -206,6 +263,20 @@ function mockApiResponse<T>(endpoint: string, method = 'GET', body?: any): T {
   if (endpoint.startsWith('/resources/accounts/') && !endpoint.includes('/')) {
     const accountId = endpoint.split('/')[3];
     const account = mockAccounts.find(a => a.id === accountId);
+    if (account) {
+      return {
+        ...account,
+        traits: { "vitally.custom.plan": "enterprise", "vitally.custom.deploymentModel": "cloud" },
+        healthScore: 8,
+        mrr: 5000,
+        npsScore: 45,
+        usersCount: 12,
+        lastSeenTimestamp: "2024-01-15T10:00:00Z",
+        nextRenewalDate: "2025-06-01T00:00:00Z",
+        csmId: "csm-1",
+        segments: [{ id: "seg-1", name: "Enterprise" }]
+      } as unknown as T;
+    }
     return account as unknown as T;
   }
 
@@ -243,6 +314,40 @@ function mockApiResponse<T>(endpoint: string, method = 'GET', body?: any): T {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     } as unknown as T;
+  }
+
+  if (endpoint === '/resources/customFields' || endpoint.startsWith('/resources/customFields?')) {
+    return [
+      { label: "Plan", type: "string", path: "vitally.custom.plan", createdAt: "2023-01-01T00:00:00Z" },
+      { label: "Deployment Model", type: "string", path: "vitally.custom.deploymentModel", createdAt: "2023-01-01T00:00:00Z" },
+      { label: "Entitlement Level", type: "string", path: "vitally.custom.entitlementLevel", createdAt: "2023-03-15T00:00:00Z" },
+      { label: "Product License", type: "string", path: "vitally.custom.productLicense", createdAt: "2023-03-15T00:00:00Z" }
+    ] as unknown as T;
+  }
+
+  if (endpoint.startsWith('/resources/accounts/') && endpoint.includes('/npsResponses')) {
+    return {
+      results: [
+        { id: "nps-1", externalId: "nps-resp-1", userId: "101", score: 9, feedback: "Great product!", respondedAt: "2024-01-10T14:00:00Z" },
+        { id: "nps-2", externalId: "nps-resp-2", userId: "102", score: 7, feedback: "Good but could improve docs", respondedAt: "2024-01-12T09:30:00Z" }
+      ],
+      next: null
+    } as unknown as T;
+  }
+
+  if (endpoint.startsWith('/resources/accounts/') && endpoint.includes('/projects')) {
+    return {
+      results: [
+        { id: "p1", name: "Enterprise Onboarding", accountId: "1", durationInDays: 30, targetStartDate: "2024-01-01", actualStartDate: "2024-01-05", actualCompletionDate: null, projectStatusId: "in-progress", traits: {} },
+      ],
+      next: null
+    } as unknown as T;
+  }
+
+  if (endpoint.startsWith('/resources/accounts/') && method === 'PUT') {
+    const accountId = endpoint.split('/')[3];
+    const account = mockAccounts.find(a => a.id === accountId);
+    return { ...account, ...body, traits: { ...(account as any)?.traits, ...body?.traits } } as unknown as T;
   }
 
   return {} as T;
@@ -517,8 +622,96 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           limit: {
             type: "number",
             description: "Maximum number of accounts to fetch (default: 100)"
+          },
+          status: {
+            type: "string",
+            description: "Filter by account status: 'active' (default), 'churned', or 'activeOrChurned'",
+            enum: ["active", "churned", "activeOrChurned"]
           }
         }
+      }
+    },
+    {
+      name: "get_account_details",
+      description: "Get full account details including traits, success metrics, health score, MRR, NPS score, timestamps, CSM assignment, segments, and all custom properties",
+      inputSchema: {
+        type: "object",
+        properties: {
+          accountId: {
+            type: "string",
+            description: "Vitally account ID or external ID"
+          }
+        },
+        required: ["accountId"]
+      }
+    },
+    {
+      name: "list_custom_traits",
+      description: "List all custom trait definitions for a given object type. Returns trait labels, data types, and API keys needed for reading/writing traits.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          model: {
+            type: "string",
+            description: "Object type to list traits for",
+            enum: ["accounts", "users", "notes", "tasks", "projects", "organizations"]
+          }
+        },
+        required: ["model"]
+      }
+    },
+    {
+      name: "update_account_traits",
+      description: "Update custom traits on a Vitally account. Traits are merged with existing values. Set a trait to null to remove it. Use list_custom_traits to discover available trait keys.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          accountId: {
+            type: "string",
+            description: "Vitally account ID"
+          },
+          traits: {
+            type: "object",
+            description: "Key-value pairs of traits to set (e.g., { 'vitally.custom.myTrait': 'value' }). Set to null to remove."
+          }
+        },
+        required: ["accountId", "traits"]
+      }
+    },
+    {
+      name: "get_account_nps",
+      description: "Get NPS survey responses for a specific account, including scores and feedback from users",
+      inputSchema: {
+        type: "object",
+        properties: {
+          accountId: {
+            type: "string",
+            description: "Vitally account ID"
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of NPS responses to return (default: 10)"
+          }
+        },
+        required: ["accountId"]
+      }
+    },
+    {
+      name: "get_account_projects",
+      description: "Get projects (e.g., onboarding, implementation) for a specific account, including status, dates, and traits",
+      inputSchema: {
+        type: "object",
+        properties: {
+          accountId: {
+            type: "string",
+            description: "Vitally account ID"
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of projects to return (default: 10)"
+          }
+        },
+        required: ["accountId"]
       }
     }
   ];
@@ -584,6 +777,31 @@ const AVAILABLE_TOOLS = [
     name: "refresh_accounts",
     description: "Vitally tool to refresh the list of accounts",
     requiredParams: []
+  },
+  {
+    name: "get_account_details",
+    description: "Get full account details including traits, success metrics, health score, MRR, NPS score, timestamps, CSM assignment, and segments",
+    requiredParams: ["accountId"]
+  },
+  {
+    name: "list_custom_traits",
+    description: "List all custom trait definitions for a given object type (accounts, users, notes, tasks, projects, organizations)",
+    requiredParams: ["model"]
+  },
+  {
+    name: "update_account_traits",
+    description: "Update custom traits on a Vitally account. Traits are merged with existing values.",
+    requiredParams: ["accountId", "traits"]
+  },
+  {
+    name: "get_account_nps",
+    description: "Get NPS survey responses for a specific account, including scores and feedback",
+    requiredParams: ["accountId"]
+  },
+  {
+    name: "get_account_projects",
+    description: "Get projects (e.g., onboarding, implementation) for a specific account",
+    requiredParams: ["accountId"]
   }
 ];
 
@@ -706,6 +924,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 id: account.id,
                 name: account.name,
                 externalId: account.externalId,
+                healthScore: account.healthScore,
+                mrr: account.mrr,
+                npsScore: account.npsScore,
+                usersCount: account.usersCount,
+                lastSeenTimestamp: account.lastSeenTimestamp,
                 uri: `vitally://account/${account.id}`
               }))
             }, null, 2)
@@ -773,6 +996,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 id: account.id,
                 name: account.name,
                 externalId: account.externalId,
+                healthScore: account.healthScore,
+                mrr: account.mrr,
+                npsScore: account.npsScore,
+                usersCount: account.usersCount,
+                lastSeenTimestamp: account.lastSeenTimestamp,
                 uri: `vitally://account/${account.id}`
               }))
             }, null, 2)
@@ -950,16 +1178,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "refresh_accounts": {
       try {
         const limit = request.params.arguments?.limit as number || 100;
-        const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyAccount>>(`/resources/accounts?limit=${limit}`);
+        const status = request.params.arguments?.status as string || 'active';
+        const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyAccount>>(
+          `/resources/accounts?limit=${limit}&status=${status}`
+        );
         accountsCache = response.results || [];
 
-        // Format summary information about accounts
+        // Format summary information about accounts with key success fields
         const summary = {
           count: accountsCache.length,
           accounts: accountsCache.map(account => ({
             id: account.id,
             name: account.name,
-            externalId: account.externalId
+            externalId: account.externalId,
+            healthScore: account.healthScore,
+            mrr: account.mrr,
+            npsScore: account.npsScore,
+            usersCount: account.usersCount,
+            churnedAt: account.churnedAt,
+            lastSeenTimestamp: account.lastSeenTimestamp,
+            nextRenewalDate: account.nextRenewalDate,
+            csmId: account.csmId,
+            traits: account.traits
           }))
         };
 
@@ -971,6 +1211,164 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       } catch (error) {
         throw new Error(`Failed to refresh accounts: ${error}`);
+      }
+    }
+
+    case "get_account_details": {
+      const accountId = request.params.arguments?.accountId as string;
+      if (!accountId) {
+        throw new Error("Account ID is required");
+      }
+
+      try {
+        const account = await callVitallyAPI<VitallyAccount>(`/resources/accounts/${accountId}`);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(account, null, 2)
+          }]
+        };
+      } catch (error) {
+        throw new Error(`Failed to get account details: ${error}`);
+      }
+    }
+
+    case "list_custom_traits": {
+      const model = request.params.arguments?.model as string;
+      if (!model) {
+        throw new Error("Model type is required (e.g., accounts, users, notes, tasks, projects, organizations)");
+      }
+
+      try {
+        const traits = await callVitallyAPI<VitallyCustomField[]>(`/resources/customFields?model=${model}`);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              model,
+              count: Array.isArray(traits) ? traits.length : 0,
+              traits: Array.isArray(traits) ? traits.map(t => ({
+                label: t.label,
+                type: t.type,
+                key: t.path,
+                createdAt: t.createdAt
+              })) : []
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        throw new Error(`Failed to list custom traits: ${error}`);
+      }
+    }
+
+    case "update_account_traits": {
+      const accountId = request.params.arguments?.accountId as string;
+      const traits = request.params.arguments?.traits as Record<string, any>;
+
+      if (!accountId || !traits) {
+        throw new Error("Account ID and traits are required");
+      }
+
+      try {
+        const updated = await callVitallyAPI<VitallyAccount>(
+          `/resources/accounts/${accountId}`,
+          'PUT',
+          { traits }
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              account: {
+                id: updated.id,
+                name: updated.name,
+                traits: updated.traits
+              }
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        throw new Error(`Failed to update account traits: ${error}`);
+      }
+    }
+
+    case "get_account_nps": {
+      const accountId = request.params.arguments?.accountId as string;
+      const limit = request.params.arguments?.limit as number || 10;
+
+      if (!accountId) {
+        throw new Error("Account ID is required");
+      }
+
+      try {
+        const queryParams = new URLSearchParams();
+        queryParams.append('limit', limit.toString());
+
+        const npsResponses = await callVitallyAPI<VitallyPaginatedResponse<VitallyNpsResponse>>(
+          `/resources/accounts/${accountId}/npsResponses?${queryParams}`
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              count: npsResponses.results.length,
+              responses: npsResponses.results.map(r => ({
+                id: r.id,
+                userId: r.userId,
+                score: r.score,
+                feedback: r.feedback,
+                respondedAt: r.respondedAt
+              }))
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        throw new Error(`Failed to get NPS responses: ${error}`);
+      }
+    }
+
+    case "get_account_projects": {
+      const accountId = request.params.arguments?.accountId as string;
+      const limit = request.params.arguments?.limit as number || 10;
+
+      if (!accountId) {
+        throw new Error("Account ID is required");
+      }
+
+      try {
+        const queryParams = new URLSearchParams();
+        queryParams.append('limit', limit.toString());
+
+        const projects = await callVitallyAPI<VitallyPaginatedResponse<VitallyProject>>(
+          `/resources/accounts/${accountId}/projects?${queryParams}`
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              count: projects.results.length,
+              projects: projects.results.map(p => ({
+                id: p.id,
+                name: p.name,
+                durationInDays: p.durationInDays,
+                targetStartDate: p.targetStartDate,
+                actualStartDate: p.actualStartDate,
+                actualCompletionDate: p.actualCompletionDate,
+                projectStatusId: p.projectStatusId,
+                projectCategoryId: p.projectCategoryId,
+                traits: p.traits,
+                createdAt: p.createdAt,
+                updatedAt: p.updatedAt
+              }))
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        throw new Error(`Failed to get account projects: ${error}`);
       }
     }
 
