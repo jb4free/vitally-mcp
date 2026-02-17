@@ -19,7 +19,11 @@ An MCP (Model Context Protocol) server that provides access to Vitally customer 
 ### Running the MCP via Docker
 
 1. Edit the config file to add the Vitally MCP server from the GitHub package repository:
-
+   - On macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
+   - On Windows: %APPDATA%\Claude\claude_desktop_config.json
+     <br>
+     <br>
+  
    ```json
    {
      "mcpServers": {
@@ -47,7 +51,7 @@ An MCP (Model Context Protocol) server that provides access to Vitally customer 
    }
    ```
 
-2. Restart Claude Desktop and you'll be able to use the Vitally MCP server.
+1. Restart Claude Desktop, and you'll be able to use the Vitally MCP server.
 
 ## Available Tools
 
@@ -59,7 +63,7 @@ An MCP (Model Context Protocol) server that provides access to Vitally customer 
 
 - `search_accounts` - Search for accounts using multiple criteria (name, externalId)
 - `find_account_by_name` - Find accounts by their name (partial matching supported)
-- `get_account_details` - Get full account details including traits, success metrics, health score, MRR, NPS, timestamps, CSM assignment, and segments
+- `get_account_details` - Get full account details, including traits, success metrics, health score, MRR, NPS, timestamps, CSM assignment, and segments
 - `refresh_accounts` - Refresh the cached list of accounts (supports status filtering: active, churned, activeOrChurned)
 - `get_account_health` - Get health score breakdown for a specific account
 
