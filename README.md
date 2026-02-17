@@ -16,73 +16,6 @@ An MCP (Model Context Protocol) server that provides access to Vitally customer 
 - Search through available tools
 - Demo mode with mock data when no API key is provided
 
-## Setup for running locally
-
-1. Install dependencies:
-
-   ```node
-   npm install
-   ```
-
-2. Create a `.env` file in the root directory with the following:
-
-   ```text
-   # Vitally API Configuration
-   VITALLY_API_SUBDOMAIN=nylas  # Your Vitally subdomain
-   VITALLY_API_KEY=your_api_key_here  # Your Vitally API key
-   VITALLY_DATA_CENTER=US  # or EU depending on your data center
-   ```
-
-3. Build the project:
-
-   ```node
-   npm run build
-   ```
-
-> **Note:** If you don't have a Vitally API key yet, the server will run in demo mode with mock data.
-
-## Getting your Vitally API Key
-
-1. Navigate to your Vitally account
-2. Go to Settings (⚙️) > Integrations > (new page) Vitally REST API
-3. Toggle the switch to enable the integration
-4. Copy the API Key (Secret Token)
-
-## Usage
-
-There are three ways to use this MCP server:
-
-### Using the MCP Inspector
-
-Run the MCP Inspector to test and debug the server:
-
-```
-npm run inspector
-```
-
-This will open the MCP Inspector interface where you can interact with your server.
-
-### Running the MCP locally
-
-1. First, find your Claude Desktop configuration file:
-   - On macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - On Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-2. Edit the config file to add the Vitally MCP server:
-
-   ```json
-   {
-     "mcpServers": {
-       "vitally": {
-         "command": "node",
-         "args": ["--experimental-modules", "--experimental-specifier-resolution=node", "/Users/johnjung/nylas/vitally/vitally/build/index.js"]
-       }
-     }
-   }
-   ```
-
-3. Restart Claude Desktop and you'll be able to use the Vitally MCP server.
-
 ### Running the MCP via Docker
 
 1. Edit the config file to add the Vitally MCP server from the GitHub package repository:
@@ -102,7 +35,7 @@ This will open the MCP Inspector interface where you can interact with your serv
                 "VITALLY_API_KEY",
                 "-e",
                 "VITALLY_DATA_CENTER",
-                "ghcr.io/fiscaltec/vitally-mcp"
+                "ghcr.io/jb4free/vitally-mcp:v0.1"
             ],
             "env": {
                 "VITALLY_API_SUBDOMAIN": "VITALLY_API_SUBDOMAIN",
