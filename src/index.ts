@@ -403,7 +403,19 @@ function mockApiResponse<T>(endpoint: string, method = 'GET', body?: any): T {
 
 // In-memory cache for accounts and users
 let accountsCache: VitallyAccount[] = [];
+let accountsCacheTimestamp = 0;
 let usersCache: VitallyUser[] = [];
+
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function isCacheStale(): boolean {
+  return accountsCache.length === 0 || Date.now() - accountsCacheTimestamp > CACHE_TTL_MS;
+}
+
+function setAccountsCache(accounts: VitallyAccount[]): void {
+  accountsCache = accounts;
+  accountsCacheTimestamp = Date.now();
+}
 
 /**
  * Create an MCP server with capabilities for resources and tools
@@ -436,9 +448,12 @@ const server = new Server(
  */
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
   try {
-    // Fetch accounts from Vitally API if not cached
-    if (accountsCache.length === 0) {
-      accountsCache = await fetchAllPages<VitallyAccount>('/resources/accounts');
+    // Fetch accounts from Vitally API if not cached or stale (first page only)
+    if (isCacheStale()) {
+      const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyAccount>>(
+        '/resources/accounts?limit=100'
+      );
+      setAccountsCache(response.results || []);
     }
 
     return {
@@ -523,7 +538,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     },
     {
       name: "search_accounts",
-      description: "Vitally tool to search for accounts by multiple criteria",
+      description: "Vitally tool to search for accounts by multiple criteria. Searches locally against cached accounts. Use maxPages to control how many API pages are fetched (each page = 100 accounts).",
       inputSchema: {
         type: "object",
         properties: {
@@ -537,7 +552,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           limit: {
             type: "number",
-            description: "Maximum number of results (default: 10)"
+            description: "Maximum number of results to return (default: 10)"
+          },
+          maxPages: {
+            type: "number",
+            description: "Number of API pages to fetch before searching (default: 1, each page = 100 accounts). Increase only if you need to search beyond the first 100 accounts."
           }
         }
       }
@@ -558,13 +577,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     },
     {
       name: "find_account_by_name",
-      description: "Vitally tool to find an account by name (partial match supported)",
+      description: "Vitally tool to find an account by name (partial match supported). Searches locally against cached accounts. Use maxPages to search beyond the first 100 accounts.",
       inputSchema: {
         type: "object",
         properties: {
           name: {
             type: "string",
             description: "Full or partial account name to search for"
+          },
+          maxPages: {
+            type: "number",
+            description: "Number of API pages to fetch before searching (default: 1, each page = 100 accounts). Increase only if you need to search beyond the first 100 accounts."
           }
         },
         required: ["name"]
@@ -583,6 +606,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           limit: {
             type: "number",
             description: "Maximum number of conversations to return (default: 10)"
+          },
+          cursor: {
+            type: "string",
+            description: "Pagination cursor returned from a previous call to get the next page"
           }
         },
         required: ["accountId"]
@@ -605,6 +632,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           limit: {
             type: "number",
             description: "Maximum number of tasks to return (default: 10)"
+          },
+          cursor: {
+            type: "string",
+            description: "Pagination cursor returned from a previous call to get the next page"
           }
         },
         required: ["accountId"]
@@ -612,7 +643,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     },
     {
       name: "get_account_notes",
-      description: "Vitally tool to retrieve notes for an account",
+      description: "Vitally tool to retrieve notes for an account. Returns truncated previews (300 chars). Use get_note_by_id for full content.",
       inputSchema: {
         type: "object",
         properties: {
@@ -623,6 +654,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           limit: {
             type: "number",
             description: "Maximum number of notes to return (default: 10)"
+          },
+          cursor: {
+            type: "string",
+            description: "Pagination cursor returned from a previous call to get the next page"
           }
         },
         required: ["accountId"]
@@ -921,15 +956,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const name = request.params.arguments?.name as string | undefined;
       const externalId = request.params.arguments?.externalId as string | undefined;
       const limit = request.params.arguments?.limit as number || 10;
+      const maxPages = request.params.arguments?.maxPages as number || 1;
 
       if (!name && !externalId) {
         throw new Error("At least one search parameter (name or externalId) is required");
       }
 
       try {
-        // Ensure accounts are loaded (all pages)
-        if (accountsCache.length === 0) {
-          accountsCache = await fetchAllPages<VitallyAccount>('/resources/accounts');
+        // Fetch accounts up to maxPages; use cache if fresh and maxPages=1
+        if (isCacheStale() || maxPages > 1) {
+          const accounts = await fetchAllPages<VitallyAccount>(
+            '/resources/accounts',
+            {},
+            maxPages
+          );
+          setAccountsCache(accounts);
         }
 
         // Filter accounts by criteria
@@ -948,14 +989,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           );
         }
 
-        // Limit results
         const limitedAccounts = filteredAccounts.slice(0, limit);
+        const searchedCount = accountsCache.length;
 
         if (limitedAccounts.length === 0) {
           return {
             content: [{
               type: "text",
-              text: `No accounts found matching the criteria`
+              text: `No accounts found matching the criteria (searched ${searchedCount} accounts)`
             }]
           };
         }
@@ -966,6 +1007,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: JSON.stringify({
               count: limitedAccounts.length,
               totalMatches: filteredAccounts.length,
+              searchedAccounts: searchedCount,
+              truncated: searchedCount === maxPages * 100,
               accounts: limitedAccounts.map(account => ({
                 id: account.id,
                 name: account.name,
@@ -1006,37 +1049,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case "find_account_by_name": {
       const name = request.params.arguments?.name as string;
+      const maxPages = request.params.arguments?.maxPages as number || 1;
+
       if (!name) {
         throw new Error("Account name is required");
       }
 
       try {
-        // Ensure accounts are loaded (all pages)
-        if (accountsCache.length === 0) {
-          accountsCache = await fetchAllPages<VitallyAccount>('/resources/accounts');
+        if (isCacheStale() || maxPages > 1) {
+          const accounts = await fetchAllPages<VitallyAccount>(
+            '/resources/accounts',
+            {},
+            maxPages
+          );
+          setAccountsCache(accounts);
         }
 
-        // Search for accounts with matching names (case insensitive)
         const nameToMatch = name.toLowerCase();
         const matchingAccounts = accountsCache.filter(account =>
           account.name.toLowerCase().includes(nameToMatch)
         );
+        const searchedCount = accountsCache.length;
 
         if (matchingAccounts.length === 0) {
           return {
             content: [{
               type: "text",
-              text: `No accounts found matching "${name}"`
+              text: `No accounts found matching "${name}" (searched ${searchedCount} accounts)`
             }]
           };
         }
 
-        // Return formatted account information
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
               count: matchingAccounts.length,
+              searchedAccounts: searchedCount,
+              truncated: searchedCount === maxPages * 100,
               accounts: matchingAccounts.map(account => ({
                 id: account.id,
                 name: account.name,
@@ -1059,6 +1109,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "get_account_conversations": {
       const accountId = request.params.arguments?.accountId as string;
       const limit = request.params.arguments?.limit as number || 10;
+      const cursor = request.params.arguments?.cursor as string | undefined;
 
       if (!accountId) {
         throw new Error("Account ID is required");
@@ -1067,6 +1118,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         const queryParams = new URLSearchParams();
         queryParams.append('limit', limit.toString());
+        if (cursor) queryParams.append('from', cursor);
 
         const conversations = await callVitallyAPI<VitallyPaginatedResponse<VitallyConversation>>(
           `/resources/accounts/${accountId}/conversations?${queryParams}`
@@ -1077,6 +1129,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             type: "text",
             text: JSON.stringify({
               count: conversations.results.length,
+              nextCursor: conversations.next ?? null,
               conversations: conversations.results.map(conv => ({
                 id: conv.id,
                 subject: conv.subject,
@@ -1095,6 +1148,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const accountId = request.params.arguments?.accountId as string;
       const status = request.params.arguments?.status as string | undefined;
       const limit = request.params.arguments?.limit as number || 10;
+      const cursor = request.params.arguments?.cursor as string | undefined;
 
       if (!accountId) {
         throw new Error("Account ID is required");
@@ -1103,9 +1157,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         const queryParams = new URLSearchParams();
         queryParams.append('limit', limit.toString());
-        if (status) {
-          queryParams.append('status', status);
-        }
+        if (status) queryParams.append('status', status);
+        if (cursor) queryParams.append('from', cursor);
 
         const tasks = await callVitallyAPI<VitallyPaginatedResponse<VitallyTask>>(
           `/resources/accounts/${accountId}/tasks?${queryParams}`
@@ -1116,6 +1169,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             type: "text",
             text: JSON.stringify({
               count: tasks.results.length,
+              nextCursor: tasks.next ?? null,
               tasks: tasks.results.map(task => ({
                 id: task.id,
                 title: task.title,
@@ -1136,6 +1190,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "get_account_notes": {
       const accountId = request.params.arguments?.accountId as string;
       const limit = request.params.arguments?.limit as number || 10;
+      const cursor = request.params.arguments?.cursor as string | undefined;
 
       if (!accountId) {
         throw new Error("Account ID is required");
@@ -1144,22 +1199,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         const queryParams = new URLSearchParams();
         queryParams.append('limit', limit.toString());
+        if (cursor) queryParams.append('from', cursor);
 
         const notes = await callVitallyAPI<VitallyPaginatedResponse<VitallyNote>>(
           `/resources/accounts/${accountId}/notes?${queryParams}`
         );
+
+        const PREVIEW_LENGTH = 300;
 
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
               count: notes.results.length,
-              notes: notes.results.map(note => ({
-                id: note.id,
-                content: note.content,
-                createdAt: note.createdAt,
-                updatedAt: note.updatedAt
-              }))
+              nextCursor: notes.next ?? null,
+              notes: notes.results.map(note => {
+                const raw = note.content ?? '';
+                const preview = raw.length > PREVIEW_LENGTH
+                  ? raw.slice(0, PREVIEW_LENGTH) + '…'
+                  : raw;
+                return {
+                  id: note.id,
+                  contentPreview: preview,
+                  truncated: raw.length > PREVIEW_LENGTH,
+                  createdAt: note.createdAt,
+                  updatedAt: note.updatedAt
+                };
+              })
             }, null, 2)
           }]
         };
@@ -1226,20 +1292,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const fetchAll = request.params.arguments?.fetchAll !== false; // default true
 
         if (fetchAll) {
-          // Fetch ALL accounts across all pages
-          accountsCache = await fetchAllPages<VitallyAccount>(
+          const accounts = await fetchAllPages<VitallyAccount>(
             '/resources/accounts',
             { status }
           );
+          setAccountsCache(accounts);
         } else {
-          // Fetch only the first page (legacy behavior)
           const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyAccount>>(
             `/resources/accounts?limit=100&status=${status}`
           );
-          accountsCache = response.results || [];
+          setAccountsCache(response.results || []);
         }
 
-        // Format summary information about accounts with key success fields
+        // Return a slim summary — use get_account_details for per-account depth
         const summary = {
           count: accountsCache.length,
           fetchedAllPages: fetchAll,
@@ -1254,8 +1319,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             churnedAt: account.churnedAt,
             lastSeenTimestamp: account.lastSeenTimestamp,
             nextRenewalDate: account.nextRenewalDate,
-            csmId: account.csmId,
-            traits: account.traits
+            csmId: account.csmId
           }))
         };
 
@@ -1281,7 +1345,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return {
           content: [{
             type: "text",
-            text: JSON.stringify(account, null, 2)
+            text: JSON.stringify({
+              id: account.id,
+              name: account.name,
+              externalId: account.externalId,
+              organizationId: account.organizationId,
+              healthScore: account.healthScore,
+              mrr: account.mrr,
+              npsScore: account.npsScore,
+              npsDetractorCount: account.npsDetractorCount,
+              npsPassiveCount: account.npsPassiveCount,
+              npsPromoterCount: account.npsPromoterCount,
+              usersCount: account.usersCount,
+              csmId: account.csmId,
+              accountExecutiveId: account.accountExecutiveId,
+              accountOwnerId: account.accountOwnerId,
+              segments: account.segments,
+              keyRoles: account.keyRoles,
+              traits: account.traits,
+              churnedAt: account.churnedAt,
+              firstSeenTimestamp: account.firstSeenTimestamp,
+              lastSeenTimestamp: account.lastSeenTimestamp,
+              lastInboundMessageTimestamp: account.lastInboundMessageTimestamp,
+              lastOutboundMessageTimestamp: account.lastOutboundMessageTimestamp,
+              nextRenewalDate: account.nextRenewalDate,
+              trialEndDate: account.trialEndDate,
+              createdAt: account.createdAt,
+              updatedAt: account.updatedAt
+            }, null, 2)
           }]
         };
       } catch (error) {
