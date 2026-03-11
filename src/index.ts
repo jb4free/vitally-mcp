@@ -886,13 +886,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     },
     {
       name: "search_custom_object_instances",
-      description: "Search for instances of a custom object type by customer, organization, external ID, or a specific trait value. Exactly one search parameter is required.",
+      description: "Search for instances of a custom object type. Provide exactly one of: instanceId, customerId, organizationId, externalId, customFieldId, or customFieldValue.",
       inputSchema: {
         type: "object",
         properties: {
           customObjectId: {
             type: "string",
             description: "Vitally custom object ID (from list_custom_objects)"
+          },
+          instanceId: {
+            type: "string",
+            description: "Find a specific instance by its Vitally-assigned ID"
           },
           customerId: {
             type: "string",
@@ -908,11 +912,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           customFieldId: {
             type: "string",
-            description: "Trait/custom field ID to filter by (use with customFieldValue)"
+            description: "Find instances that have this custom field ID set (independent search — do not combine with customFieldValue)"
           },
           customFieldValue: {
             type: "string",
-            description: "Value to match for the given customFieldId"
+            description: "Find instances with this custom field value (independent search — do not combine with customFieldId)"
           }
         },
         required: ["customObjectId"]
@@ -1786,6 +1790,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case "search_custom_object_instances": {
       const customObjectId = request.params.arguments?.customObjectId as string;
+      const instanceId = request.params.arguments?.instanceId as string | undefined;
       const customerId = request.params.arguments?.customerId as string | undefined;
       const organizationId = request.params.arguments?.organizationId as string | undefined;
       const externalId = request.params.arguments?.externalId as string | undefined;
@@ -1796,10 +1801,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error("customObjectId is required");
       }
 
-      const searchParams = [customerId, organizationId, externalId, customFieldId].filter(Boolean);
+      if (customFieldId && customFieldValue) {
+        throw new Error(
+          "customFieldId and customFieldValue are independent search options — provide only one. " +
+          "Use customFieldId to search by field definition, or customFieldValue to search by value."
+        );
+      }
+
+      const searchParams = [instanceId, customerId, organizationId, externalId, customFieldId, customFieldValue]
+        .filter(Boolean);
+
       if (searchParams.length === 0) {
         throw new Error(
-          "Exactly one search parameter is required: customerId, organizationId, externalId, or customFieldId"
+          "Exactly one search parameter is required: instanceId, customerId, organizationId, " +
+          "externalId, customFieldId, or customFieldValue"
         );
       }
       if (searchParams.length > 1) {
@@ -1807,19 +1822,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           "Provide exactly one search parameter — the API accepts only one at a time"
         );
       }
-      if (customFieldId && !customFieldValue) {
-        throw new Error("customFieldValue is required when customFieldId is provided");
-      }
 
       try {
         const queryParams = new URLSearchParams();
+        if (instanceId) queryParams.set('id', instanceId);
         if (customerId) queryParams.set('customerId', customerId);
         if (organizationId) queryParams.set('organizationId', organizationId);
         if (externalId) queryParams.set('externalId', externalId);
         if (customFieldId) queryParams.set('customFieldId', customFieldId);
         if (customFieldValue) queryParams.set('customFieldValue', customFieldValue);
 
-        const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyCustomObjectInstance>>(
+        const response = await callVitallyAPI<{ results: VitallyCustomObjectInstance[] }>(
           `/resources/customObjects/${customObjectId}/instances/search?${queryParams}`
         );
 
