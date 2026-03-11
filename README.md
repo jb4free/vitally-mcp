@@ -6,52 +6,109 @@ An MCP (Model Context Protocol) server that provides access to Vitally customer 
 
 ## Features
 
-- List customer accounts as resources
-- Read account details
-- Search for users by email or external ID
-- Find accounts by name
-- Query account health scores
-- View account conversations and tasks
+- List and search customer accounts
+- Read account details, health scores, traits, and success metrics
+- Search users by email or external ID
+- View conversations, tasks, notes, NPS responses, and projects
+- Browse and search custom objects and their instances
 - Create notes for accounts
-- Search through available tools
-- Demo mode with mock data when no API key is provided
+- Update custom traits on accounts
 
-### Running the MCP via Docker
+## Installation
 
-1. Edit the config file to add the Vitally MCP server from the GitHub package repository:
-   - On macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
-   - On Windows: %APPDATA%\Claude\claude_desktop_config.json
-     <br>
-     <br>
-  
-   ```json
-   {
-     "mcpServers": {
-       "vitally": {
-            "command": "docker",
-            "args": [
-                "run",
-                "--rm",
-                "-i",
-                "-e",
-                "VITALLY_API_SUBDOMAIN",
-                "-e",
-                "VITALLY_API_KEY",
-                "-e",
-                "VITALLY_DATA_CENTER",
-                "ghcr.io/jb4free/vitally-mcp:v0.1"
-            ],
-            "env": {
-                "VITALLY_API_SUBDOMAIN": "VITALLY_API_SUBDOMAIN",
-                "VITALLY_API_KEY": "VITALLY_API_KEY",
-                "VITALLY_DATA_CENTER": "VITALLY_DATA_CENTER"
-            }
-        }
-     }
-   }
-   ```
+### macOS — quick install
 
-1. Restart Claude Desktop, and you'll be able to use the Vitally MCP server.
+Run the installer script. It will check for Node.js, clone the repo, build the project, and configure Claude Desktop automatically.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jb4free/vitally-mcp/main/install.sh -o install.sh
+bash install.sh
+```
+
+You will be prompted for:
+- **Install directory** (default: `~/vitally-mcp`)
+- **Vitally API key** — found in Vitally under Settings → Integrations → REST API
+- **Vitally subdomain** — the prefix of your Vitally URL (e.g. `acme` from `acme.vitally.io`)
+- **Data center** — `US` (default) or `EU`
+
+Once complete, fully quit and relaunch Claude Desktop (Cmd+Q, then reopen).
+
+### macOS — manual install
+
+**Prerequisites:** Node.js v18+ and npm. Install via [Homebrew](https://brew.sh) if needed:
+
+```bash
+brew install node
+```
+
+**1. Clone the repository:**
+
+```bash
+git clone https://github.com/jb4free/vitally-mcp.git ~/vitally-mcp
+cd ~/vitally-mcp
+```
+
+**2. Install dependencies:**
+
+```bash
+npm install
+```
+
+**3. Build the project:**
+
+```bash
+npm run build
+```
+
+**4. Configure Claude Desktop:**
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` and add the `vitally` entry inside `mcpServers`. Replace the placeholder values with your credentials.
+
+```json
+{
+  "mcpServers": {
+    "vitally": {
+      "command": "node",
+      "args": [
+        "--experimental-modules",
+        "--experimental-specifier-resolution=node",
+        "/Users/YOUR_USERNAME/vitally-mcp/build/index.js"
+      ],
+      "env": {
+        "VITALLY_API_KEY": "your_api_key",
+        "VITALLY_API_SUBDOMAIN": "your_subdomain",
+        "VITALLY_DATA_CENTER": "US"
+      }
+    }
+  }
+}
+```
+
+**5. Restart Claude Desktop** (Cmd+Q, then reopen — closing the window is not enough).
+
+### Docker
+
+```json
+{
+  "mcpServers": {
+    "vitally": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "VITALLY_API_SUBDOMAIN",
+        "-e", "VITALLY_API_KEY",
+        "-e", "VITALLY_DATA_CENTER",
+        "ghcr.io/jb4free/vitally-mcp:v0.1"
+      ],
+      "env": {
+        "VITALLY_API_KEY": "your_api_key",
+        "VITALLY_API_SUBDOMAIN": "your_subdomain",
+        "VITALLY_DATA_CENTER": "US"
+      }
+    }
+  }
+}
+```
 
 ## Available Tools
 
@@ -61,10 +118,10 @@ An MCP (Model Context Protocol) server that provides access to Vitally customer 
 
 ### Account Management
 
-- `search_accounts` - Search for accounts using multiple criteria (name, externalId)
-- `find_account_by_name` - Find accounts by their name (partial matching supported)
-- `get_account_details` - Get full account details, including traits, success metrics, health score, MRR, NPS, timestamps, CSM assignment, and segments
-- `refresh_accounts` - Refresh the cached list of accounts (supports status filtering: active, churned, activeOrChurned)
+- `search_accounts` - Search accounts by name or external ID
+- `find_account_by_name` - Find accounts by name (partial match supported)
+- `get_account_details` - Get full account details including traits, health score, MRR, NPS, timestamps, CSM, and segments
+- `refresh_accounts` - Refresh the cached account list (supports status filtering: active, churned, activeOrChurned)
 - `get_account_health` - Get health score breakdown for a specific account
 
 ### Traits & Success Metrics
@@ -80,7 +137,7 @@ An MCP (Model Context Protocol) server that provides access to Vitally customer 
 
 - `get_account_conversations` - Get recent conversations for an account
 - `get_account_tasks` - Get tasks for an account (can filter by status)
-- `get_account_notes` - Get notes for an account
+- `get_account_notes` - Get notes for an account (truncated previews; use `get_note_by_id` for full content)
 - `get_note_by_id` - Get full content of a specific note
 - `create_account_note` - Create a new note for an account
 
@@ -90,42 +147,43 @@ An MCP (Model Context Protocol) server that provides access to Vitally customer 
 
 ### Projects
 
-- `get_account_projects` - Get projects (e.g., onboarding, implementation) for an account
+- `get_account_projects` - Get projects (e.g. onboarding, implementation) for an account
+
+### Custom Objects
+
+- `list_custom_objects` - List all custom object type definitions (schemas and field definitions)
+- `get_custom_object` - Get the full schema for a single custom object type
+- `list_custom_object_instances` - List records of a custom object type with pagination
+- `search_custom_object_instances` - Find instances by customer, organization, external ID, or field value
 
 ## Example Questions to Ask
-
-When connected to an MCP client like Claude, you can ask questions such as:
 
 - "List all our customers"
 - "Find accounts with 'Acme' in their name"
 - "What's the health score for account X?"
 - "Show me full details and traits for customer Y"
-- "Which customers have the highest success metrics?"
+- "Which customers have the highest MRR?"
 - "What custom traits are defined on our accounts?"
 - "Update the deployment model trait for account X to 'cloud'"
-- "Find user with email <example@company.com>"
+- "Find user with email example@company.com"
 - "Get recent conversations for account Z"
 - "What tasks are open for account A?"
 - "Show me NPS responses for account B"
 - "What onboarding projects are in progress for account C?"
 - "Add a note to account B about our recent call"
 - "Show me all churned accounts"
+- "What custom object types exist in Vitally?"
+- "Show me all contract objects linked to account X"
 
 ## Troubleshooting
 
-- If you encounter JSON parsing errors, ensure you've removed all console.log statements from the code
-- Make sure your `.env` file contains the correct API credentials
-- Check that you've built the project (`npm run build`) after making changes
-- Verify the path in claude_desktop_config.json is absolute and correct for your system
-- If you don't have a valid API key, the server will run in demo mode with mock data
+- **Zero accounts returned** — check that `VITALLY_API_KEY` and `VITALLY_API_SUBDOMAIN` are set correctly in your Claude Desktop config. If the API key is missing or invalid the server runs in demo mode with mock data.
+- **Claude Desktop not picking up the server** — make sure you fully quit (Cmd+Q) and relaunched. Closing the window does not restart the MCP server.
+- **Build errors** — ensure Node.js v18+ is installed (`node --version`) and run `npm install` before `npm run build`.
+- **Path errors in config** — the path in `args` must be the absolute path to `build/index.js`. Verify it matches your actual install location.
 
-## Attibution
+## Attribution
 
-As mentioned previously and in other files, this MCP has been created with original code from John Jung and containerised by Dan Searle.
+Originally created by [John Jung](https://github.com/johnjjung/vitally-mcp), containerised by Dan Searle.
 
-All rightts go to [John Jung](<https://github.com/johnjjung/vitally-mcp>).
-
-## Notes
-
-- This has only been tested with Claude Desktop as of this moment however, is likely to woth with others but the configuration may not translate and is untested.
-- Please raise an issue in either this repository, or the [original](<https://github.com/johnjjung/vitally-mcp>) if you find an issue or if you would like an improvement.
+Please raise issues in this repository or the [original](https://github.com/johnjjung/vitally-mcp).
