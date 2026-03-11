@@ -35,12 +35,17 @@ print_step "Checking for Homebrew"
 if ! command -v brew &>/dev/null; then
   print_warn "Homebrew not found. Installing..."
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  if [[ -f /opt/homebrew/bin/brew ]]; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-  fi
   print_ok "Homebrew installed"
 else
   print_ok "Homebrew found: $(brew --version | head -1)"
+fi
+
+# Always eval shellenv so Homebrew's bin is on PATH for the rest of this
+# script, regardless of whether brew was just installed or already present.
+if [[ -f /opt/homebrew/bin/brew ]]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [[ -f /usr/local/bin/brew ]]; then
+  eval "$(/usr/local/bin/brew shellenv)"
 fi
 
 # ── Node.js / npm ─────────────────────────────────────────────────────────────
@@ -49,12 +54,23 @@ print_step "Checking for Node.js"
 if ! command -v node &>/dev/null; then
   print_warn "Node.js not found. Installing via Homebrew..."
   brew install node
+  # Refresh PATH so the newly installed node binary is found immediately.
+  if [[ -f /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [[ -f /usr/local/bin/brew ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
   print_ok "Node.js installed: $(node --version)"
 else
   NODE_MAJOR=$(node --version | sed 's/v//' | cut -d. -f1)
   if [[ "$NODE_MAJOR" -lt 18 ]]; then
     print_warn "Node.js $(node --version) found but v18+ is required. Upgrading..."
     brew upgrade node || brew install node
+    if [[ -f /opt/homebrew/bin/brew ]]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [[ -f /usr/local/bin/brew ]]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    fi
   fi
   print_ok "Node.js $(node --version)"
   print_ok "npm $(npm --version)"
@@ -117,8 +133,7 @@ done
 
 printf "  Data center — US or EU [US]: "
 read -r VITALLY_DATA_CENTER
-VITALLY_DATA_CENTER="${VITALLY_DATA_CENTER:-US}"
-VITALLY_DATA_CENTER="${VITALLY_DATA_CENTER^^}"
+VITALLY_DATA_CENTER=$(echo "${VITALLY_DATA_CENTER:-US}" | tr '[:lower:]' '[:upper:]')
 if [[ "$VITALLY_DATA_CENTER" != "US" && "$VITALLY_DATA_CENTER" != "EU" ]]; then
   print_warn "Unrecognised value '$VITALLY_DATA_CENTER', defaulting to US."
   VITALLY_DATA_CENTER="US"
@@ -183,6 +198,9 @@ echo "────────────────────────�
 echo -e "  Installed to: ${BOLD}$INSTALL_DIR${NC}"
 echo -e "  Config:       ${BOLD}$CLAUDE_CONFIG${NC}"
 echo ""
-echo -e "  ${BOLD}Next step:${NC} fully quit and relaunch Claude Desktop"
-echo -e "  (Cmd+Q then reopen — closing the window is not enough)"
+echo -e "  ${BOLD}Next steps:${NC}"
+echo -e "  1. Open a new terminal tab so that node and npm are on your PATH."
+echo -e "     Or run:  source ~/.zprofile"
+echo -e "  2. Fully quit and relaunch Claude Desktop (Cmd+Q, then reopen)."
+echo -e "     Closing the window is not enough."
 echo ""
