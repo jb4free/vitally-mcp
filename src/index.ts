@@ -64,6 +64,41 @@ interface VitallyCustomField {
   createdAt: string;
 }
 
+interface VitallyCustomObjectField {
+  label: string;
+  type: string;
+  path: string;
+  model: string;
+}
+
+interface VitallyCustomObject {
+  id: string;
+  name: string;
+  label: string;
+  writeMode: string;
+  syncActive?: boolean;
+  customFields?: VitallyCustomObjectField[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+interface VitallyCustomObjectInstance {
+  id: string;
+  name: string;
+  externalId?: string;
+  customObjectId: string;
+  customerId?: string;
+  customer?: { id: string; name: string };
+  organizationId?: string;
+  organization?: { id: string; name: string };
+  ownedByVitallyUserId?: string;
+  createdByVitallyUserId?: string;
+  traits?: Record<string, any>;
+  archivedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 interface VitallyNpsResponse {
   id: string;
   externalId?: string;
@@ -795,6 +830,93 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         required: ["accountId"]
       }
+    },
+    {
+      name: "list_custom_objects",
+      description: "List all custom object type definitions in Vitally (e.g. 'Contract', 'Subscription'). Returns the schema for each, including id, name, label, writeMode, and custom field definitions. Use this to discover what custom objects exist before fetching instances.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          cursor: {
+            type: "string",
+            description: "Pagination cursor returned from a previous call to get the next page"
+          }
+        }
+      }
+    },
+    {
+      name: "get_custom_object",
+      description: "Get the schema/definition for a single custom object type, including all its custom field definitions and their trait paths.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          customObjectId: {
+            type: "string",
+            description: "Vitally custom object ID"
+          }
+        },
+        required: ["customObjectId"]
+      }
+    },
+    {
+      name: "list_custom_object_instances",
+      description: "List instances of a specific custom object type. Each instance represents a real record (e.g. a specific contract or subscription). Returns name, traits, and associated customer/organization.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          customObjectId: {
+            type: "string",
+            description: "Vitally custom object ID (from list_custom_objects)"
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of instances to return (default: 10)"
+          },
+          cursor: {
+            type: "string",
+            description: "Pagination cursor returned from a previous call to get the next page"
+          },
+          includeArchived: {
+            type: "boolean",
+            description: "If true, include archived (deleted) instances (default: false)"
+          }
+        },
+        required: ["customObjectId"]
+      }
+    },
+    {
+      name: "search_custom_object_instances",
+      description: "Search for instances of a custom object type by customer, organization, external ID, or a specific trait value. Exactly one search parameter is required.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          customObjectId: {
+            type: "string",
+            description: "Vitally custom object ID (from list_custom_objects)"
+          },
+          customerId: {
+            type: "string",
+            description: "Find all instances associated with this Vitally account/customer ID"
+          },
+          organizationId: {
+            type: "string",
+            description: "Find all instances associated with this Vitally organization ID"
+          },
+          externalId: {
+            type: "string",
+            description: "Find the instance with this external system ID"
+          },
+          customFieldId: {
+            type: "string",
+            description: "Trait/custom field ID to filter by (use with customFieldValue)"
+          },
+          customFieldValue: {
+            type: "string",
+            description: "Value to match for the given customFieldId"
+          }
+        },
+        required: ["customObjectId"]
+      }
     }
   ];
 
@@ -884,6 +1006,26 @@ const AVAILABLE_TOOLS = [
     name: "get_account_projects",
     description: "Get projects (e.g., onboarding, implementation) for a specific account",
     requiredParams: ["accountId"]
+  },
+  {
+    name: "list_custom_objects",
+    description: "List all custom object type definitions in Vitally (schemas, field definitions)",
+    requiredParams: []
+  },
+  {
+    name: "get_custom_object",
+    description: "Get the schema/definition for a single custom object type including its custom field definitions",
+    requiredParams: ["customObjectId"]
+  },
+  {
+    name: "list_custom_object_instances",
+    description: "List instances of a specific custom object type",
+    requiredParams: ["customObjectId"]
+  },
+  {
+    name: "search_custom_object_instances",
+    description: "Search for custom object instances by customer, organization, external ID, or trait value",
+    requiredParams: ["customObjectId"]
   }
 ];
 
@@ -1516,6 +1658,195 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       } catch (error) {
         throw new Error(`Failed to get account projects: ${error}`);
+      }
+    }
+
+    case "list_custom_objects": {
+      const cursor = request.params.arguments?.cursor as string | undefined;
+
+      try {
+        const queryParams = new URLSearchParams();
+        queryParams.set('limit', '100');
+        if (cursor) queryParams.set('from', cursor);
+
+        const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyCustomObject>>(
+          `/resources/customObjects?${queryParams}`
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              count: response.results.length,
+              nextCursor: response.next ?? null,
+              customObjects: response.results.map(obj => ({
+                id: obj.id,
+                name: obj.name,
+                label: obj.label,
+                writeMode: obj.writeMode,
+                syncActive: obj.syncActive,
+                customFields: obj.customFields?.map(f => ({
+                  label: f.label,
+                  type: f.type,
+                  path: f.path
+                })) ?? [],
+                createdAt: obj.createdAt,
+                updatedAt: obj.updatedAt
+              }))
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        throw new Error(`Failed to list custom objects: ${error}`);
+      }
+    }
+
+    case "get_custom_object": {
+      const customObjectId = request.params.arguments?.customObjectId as string;
+      if (!customObjectId) {
+        throw new Error("customObjectId is required");
+      }
+
+      try {
+        const obj = await callVitallyAPI<VitallyCustomObject>(
+          `/resources/customObjects/${customObjectId}`
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              id: obj.id,
+              name: obj.name,
+              label: obj.label,
+              writeMode: obj.writeMode,
+              syncActive: obj.syncActive,
+              customFields: obj.customFields?.map(f => ({
+                label: f.label,
+                type: f.type,
+                path: f.path
+              })) ?? [],
+              createdAt: obj.createdAt,
+              updatedAt: obj.updatedAt
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        throw new Error(`Failed to get custom object: ${error}`);
+      }
+    }
+
+    case "list_custom_object_instances": {
+      const customObjectId = request.params.arguments?.customObjectId as string;
+      const limit = request.params.arguments?.limit as number || 10;
+      const cursor = request.params.arguments?.cursor as string | undefined;
+      const includeArchived = request.params.arguments?.includeArchived as boolean || false;
+
+      if (!customObjectId) {
+        throw new Error("customObjectId is required");
+      }
+
+      try {
+        const queryParams = new URLSearchParams();
+        queryParams.set('limit', limit.toString());
+        if (cursor) queryParams.set('from', cursor);
+        if (includeArchived) queryParams.set('archived', 'true');
+
+        const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyCustomObjectInstance>>(
+          `/resources/customObjects/${customObjectId}/instances?${queryParams}`
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              count: response.results.length,
+              nextCursor: response.next ?? null,
+              instances: response.results.map(inst => ({
+                id: inst.id,
+                name: inst.name,
+                externalId: inst.externalId,
+                customerId: inst.customerId,
+                customer: inst.customer ?? null,
+                organizationId: inst.organizationId,
+                organization: inst.organization ?? null,
+                ownedByVitallyUserId: inst.ownedByVitallyUserId,
+                traits: inst.traits ?? {},
+                archivedAt: inst.archivedAt ?? null,
+                createdAt: inst.createdAt,
+                updatedAt: inst.updatedAt
+              }))
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        throw new Error(`Failed to list custom object instances: ${error}`);
+      }
+    }
+
+    case "search_custom_object_instances": {
+      const customObjectId = request.params.arguments?.customObjectId as string;
+      const customerId = request.params.arguments?.customerId as string | undefined;
+      const organizationId = request.params.arguments?.organizationId as string | undefined;
+      const externalId = request.params.arguments?.externalId as string | undefined;
+      const customFieldId = request.params.arguments?.customFieldId as string | undefined;
+      const customFieldValue = request.params.arguments?.customFieldValue as string | undefined;
+
+      if (!customObjectId) {
+        throw new Error("customObjectId is required");
+      }
+
+      const searchParams = [customerId, organizationId, externalId, customFieldId].filter(Boolean);
+      if (searchParams.length === 0) {
+        throw new Error(
+          "Exactly one search parameter is required: customerId, organizationId, externalId, or customFieldId"
+        );
+      }
+      if (searchParams.length > 1) {
+        throw new Error(
+          "Provide exactly one search parameter — the API accepts only one at a time"
+        );
+      }
+      if (customFieldId && !customFieldValue) {
+        throw new Error("customFieldValue is required when customFieldId is provided");
+      }
+
+      try {
+        const queryParams = new URLSearchParams();
+        if (customerId) queryParams.set('customerId', customerId);
+        if (organizationId) queryParams.set('organizationId', organizationId);
+        if (externalId) queryParams.set('externalId', externalId);
+        if (customFieldId) queryParams.set('customFieldId', customFieldId);
+        if (customFieldValue) queryParams.set('customFieldValue', customFieldValue);
+
+        const response = await callVitallyAPI<VitallyPaginatedResponse<VitallyCustomObjectInstance>>(
+          `/resources/customObjects/${customObjectId}/instances/search?${queryParams}`
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              count: response.results.length,
+              instances: response.results.map(inst => ({
+                id: inst.id,
+                name: inst.name,
+                externalId: inst.externalId,
+                customerId: inst.customerId,
+                customer: inst.customer ?? null,
+                organizationId: inst.organizationId,
+                organization: inst.organization ?? null,
+                ownedByVitallyUserId: inst.ownedByVitallyUserId,
+                traits: inst.traits ?? {},
+                archivedAt: inst.archivedAt ?? null,
+                createdAt: inst.createdAt,
+                updatedAt: inst.updatedAt
+              }))
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        throw new Error(`Failed to search custom object instances: ${error}`);
       }
     }
 
