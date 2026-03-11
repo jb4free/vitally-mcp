@@ -82,13 +82,21 @@ interface VitallyCustomObject {
   updatedAt?: string;
 }
 
+interface VitallyCustomObjectInstanceCustomer {
+  id: string;
+  name: string;
+  externalId?: string;
+  traits?: Record<string, any>;
+}
+
 interface VitallyCustomObjectInstance {
   id: string;
   name: string;
   externalId?: string;
   customObjectId: string;
   customerId?: string;
-  customer?: { id: string; name: string };
+  customer?: VitallyCustomObjectInstanceCustomer;
+  customers?: VitallyCustomObjectInstanceCustomer[];
   organizationId?: string;
   organization?: { id: string; name: string };
   ownedByVitallyUserId?: string;
@@ -450,6 +458,26 @@ function isCacheStale(): boolean {
 function setAccountsCache(accounts: VitallyAccount[]): void {
   accountsCache = accounts;
   accountsCacheTimestamp = Date.now();
+}
+
+/**
+ * Return a slim customer list from a custom object instance.
+ * Prefers the `customers` array (all linked accounts) over the singular
+ * `customer` field (primary only). ARR is pulled from traits.
+ */
+function slimCustomers(inst: VitallyCustomObjectInstance) {
+  const source = inst.customers?.length
+    ? inst.customers
+    : inst.customer
+      ? [inst.customer]
+      : [];
+
+  return source.map(c => ({
+    id: c.id,
+    name: c.name,
+    externalId: c.externalId ?? null,
+    arr: c.traits?.['vitally.custom.arr'] ?? null
+  }));
 }
 
 /**
@@ -1770,8 +1798,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 id: inst.id,
                 name: inst.name,
                 externalId: inst.externalId,
-                customerId: inst.customerId,
-                customer: inst.customer ?? null,
+                customers: slimCustomers(inst),
                 organizationId: inst.organizationId,
                 organization: inst.organization ?? null,
                 ownedByVitallyUserId: inst.ownedByVitallyUserId,
@@ -1845,8 +1872,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 id: inst.id,
                 name: inst.name,
                 externalId: inst.externalId,
-                customerId: inst.customerId,
-                customer: inst.customer ?? null,
+                customers: slimCustomers(inst),
                 organizationId: inst.organizationId,
                 organization: inst.organization ?? null,
                 ownedByVitallyUserId: inst.ownedByVitallyUserId,
