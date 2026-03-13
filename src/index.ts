@@ -1877,16 +1877,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (customFieldId) queryParams.set('customFieldId', customFieldId);
         if (customFieldValue) queryParams.set('customFieldValue', customFieldValue);
 
-        const response = await callVitallyAPI<{ results: VitallyCustomObjectInstance[] }>(
+        const raw = await callVitallyAPI<unknown>(
           `/resources/customObjects/${customObjectId}/instances/search?${queryParams}`
         );
+
+        // The search endpoint response shape is inconsistent with the docs —
+        // handle a bare array, { results: [] }, or an empty/unexpected response.
+        const instances: VitallyCustomObjectInstance[] = Array.isArray(raw)
+          ? raw
+          : Array.isArray((raw as any)?.results)
+            ? (raw as any).results
+            : [];
 
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
-              count: response.results.length,
-              instances: response.results.map(inst => ({
+              count: instances.length,
+              instances: instances.map(inst => ({
                 id: inst.id,
                 name: inst.name,
                 externalId: inst.externalId,
