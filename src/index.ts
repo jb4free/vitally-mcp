@@ -89,6 +89,10 @@ interface VitallyCustomObjectInstanceCustomer {
   traits?: Record<string, any>;
 }
 
+interface VitallyDescriptionNode {
+  children: Array<{ text: string }>;
+}
+
 interface VitallyCustomObjectInstance {
   id: string;
   name: string;
@@ -101,6 +105,7 @@ interface VitallyCustomObjectInstance {
   organization?: { id: string; name: string };
   ownedByVitallyUserId?: string;
   createdByVitallyUserId?: string;
+  descriptionBody?: VitallyDescriptionNode[];
   traits?: Record<string, any>;
   archivedAt?: string;
   createdAt?: string;
@@ -458,6 +463,18 @@ function isCacheStale(): boolean {
 function setAccountsCache(accounts: VitallyAccount[]): void {
   accountsCache = accounts;
   accountsCacheTimestamp = Date.now();
+}
+
+/**
+ * Extract plain text from a Slate-style descriptionBody array.
+ * Joins paragraph children text with newlines, stripping empty paragraphs.
+ */
+function extractDescription(nodes: VitallyDescriptionNode[] | undefined): string {
+  if (!nodes?.length) return '';
+  return nodes
+    .map(node => node.children.map(c => c.text).join(''))
+    .filter(line => line.trim() !== '')
+    .join('\n');
 }
 
 /**
@@ -1798,6 +1815,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 id: inst.id,
                 name: inst.name,
                 externalId: inst.externalId,
+                description: extractDescription(inst.descriptionBody),
                 customers: slimCustomers(inst),
                 organizationId: inst.organizationId,
                 organization: inst.organization ?? null,
@@ -1872,6 +1890,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 id: inst.id,
                 name: inst.name,
                 externalId: inst.externalId,
+                description: extractDescription(inst.descriptionBody),
                 customers: slimCustomers(inst),
                 organizationId: inst.organizationId,
                 organization: inst.organization ?? null,
